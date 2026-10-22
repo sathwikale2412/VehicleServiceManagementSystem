@@ -1,0 +1,21 @@
+{
+  "routes": [
+    { "path": "/", "title": "Home" },
+    { "path": "/login", "title": "Sign in" },
+    { "path": "/register", "title": "Create account" },
+    { "path": "/forgot-password", "title": "Reset password" },
+    { "path": "/reset-password", "title": "Choose a new password" },
+    { "path": "/app", "title": "Dashboard" },
+    { "path": "/app/vehicles", "title": "My vehicles" },
+    { "path": "/app/vehicles/:id", "title": "Vehicle details" },
+    { "path": "/app/services", "title": "Service records" },
+    { "path": "/app/expenses", "title": "Expense tracker" },
+    { "path": "/app/documents", "title": "Documents and insurance" },
+    { "path": "/app/reminders", "title": "Reminders" },
+    { "path": "/app/reports", "title": "Reports and analytics" },
+    { "path": "/app/assistant", "title": "AI Assistant" },
+    { "path": "/app/profile", "title": "Profile and settings" },
+    { "path": "/app/support", "title": "Feedback and support" },
+    { "path": "/app/admin", "title": "Admin dashboard" }
+  ]
+}
