@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   blobPut: vi.fn(),
   blobDel: vi.fn(),
   aiCreate: vi.fn(),
+  aiModelEligible: vi.fn(async () => true),
 }));
 
 vi.mock('../server/models', () => ({
@@ -41,6 +42,7 @@ vi.mock('../server/models', () => ({
 }));
 
 vi.mock('../server/database', () => ({ connectDatabase: vi.fn(async () => undefined) }));
+vi.mock('../server/ai-models', () => ({ isAiModelEligible: mocks.aiModelEligible }));
 vi.mock('../server/security', () => ({
   requireUser: (req: any, _res: any, next: any) => { const owner = req.get('x-test-owner'); if (owner) req.userId = owner; next(); },
   requireCsrf: (_req: any, _res: any, next: any) => next(),
@@ -76,11 +78,13 @@ function queryResult<T>(result: T) {
   return query;
 }
 
-const envKeys = ['BLOB_READ_WRITE_TOKEN', 'AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'RESEND_API_KEY', 'EMAIL_FROM', 'APP_BASE_URL', 'CRON_SECRET', 'ADMIN_EMAILS'] as const;
+const envKeys = ['BLOB_READ_WRITE_TOKEN', 'AI_GATEWAY_API_KEY', 'AI_MODEL', 'VERCEL_OIDC_TOKEN', 'RESEND_API_KEY', 'EMAIL_FROM', 'APP_BASE_URL', 'CRON_SECRET', 'ADMIN_EMAILS'] as const;
 const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 
 afterEach(() => {
   vi.clearAllMocks();
+  mocks.aiModelEligible.mockReset();
+  mocks.aiModelEligible.mockResolvedValue(true);
   vi.unstubAllGlobals();
   mocks.vehicleRows = [];
   for (const key of envKeys) {
@@ -166,8 +170,27 @@ describe('API access, validation, and safe failure behavior', () => {
     expect(mocks.vehicleFind).not.toHaveBeenCalled();
   });
 
+  it('does not treat an API key alone as a ready AI configuration without an explicit model ID', async () => {
+    process.env.AI_GATEWAY_API_KEY = 'unit-test-only';
+    delete process.env.AI_MODEL;
+    const response = await request(app).post('/api/ai/insights').set('x-test-owner', 'owner-a').send({}).expect(503);
+    expect(response.body.error).toMatch(/eligible model/i);
+    expect(mocks.aiModelEligible).not.toHaveBeenCalled();
+    expect(mocks.vehicleFind).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the configured model is not eligible for the Gateway account', async () => {
+    process.env.AI_GATEWAY_API_KEY = 'unit-test-only';
+    process.env.AI_MODEL = 'openai/test-model';
+    mocks.aiModelEligible.mockResolvedValue(false);
+    await request(app).post('/api/ai/insights').set('x-test-owner', 'owner-a').send({}).expect(503);
+    expect(mocks.aiModelEligible).toHaveBeenCalledWith('unit-test-only', 'openai/test-model');
+    expect(mocks.vehicleFind).not.toHaveBeenCalled();
+  });
+
   it('handles an upstream AI failure without returning provider details', async () => {
     process.env.AI_GATEWAY_API_KEY = 'unit-test-only';
+    process.env.AI_MODEL = 'openai/test-model';
     mocks.vehicleFind.mockImplementation(() => queryResult([{ _id: '0123456789abcdef01234567', make: 'Honda', model: 'City', year: 2022, odometer: 12000 }]));
     mocks.serviceFind.mockImplementation(() => queryResult([]));
     mocks.expenseFind.mockImplementation(() => queryResult([]));
@@ -180,6 +203,7 @@ describe('API access, validation, and safe failure behavior', () => {
 
   it('rejects malformed or implausibly short AI completions', async () => {
     process.env.AI_GATEWAY_API_KEY = 'unit-test-only';
+    process.env.AI_MODEL = 'openai/test-model';
     mocks.vehicleFind.mockImplementation(() => queryResult([{ _id: '0123456789abcdef01234567', make: 'Honda', model: 'City', year: 2022, odometer: 12000 }]));
     mocks.serviceFind.mockImplementation(() => queryResult([]));
     mocks.expenseFind.mockImplementation(() => queryResult([]));
@@ -199,6 +223,31 @@ describe('API access, validation, and safe failure behavior', () => {
       vehicleId, date: '2026-03-15', serviceType: 'Oil change', odometer: 11000, cost: 500,
     }).expect(409);
     expect(mocks.serviceCreate).not.toHaveBeenCalled();
+  });
+
+  it('rejects future service dates on create and edit before writing records', async () => {
+    const vehicleId = '0123456789abcdef01234567';
+    const serviceId = '1123456789abcdef01234567';
+    const record = { vehicleId, date: '2099-01-01', serviceType: 'Future service', odometer: 12000, cost: 500 };
+    await request(app).post('/api/services').set('x-test-owner', 'owner-a').set('x-client-time-zone', 'Asia/Kolkata').send(record).expect(400);
+    await request(app).patch(`/api/services/${serviceId}`).set('x-test-owner', 'owner-a').set('x-client-time-zone', 'Asia/Kolkata').send(record).expect(400);
+    expect(mocks.serviceCreate).not.toHaveBeenCalled();
+    expect(mocks.serviceUpdate).not.toHaveBeenCalled();
+    expect(mocks.serviceFindOne).not.toHaveBeenCalled();
+  });
+
+  it('accepts the current date in the submitting browser time zone', async () => {
+    const vehicleId = '0123456789abcdef01234567';
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const dateParts = Object.fromEntries(parts.filter((part) => ['year', 'month', 'day'].includes(part.type)).map((part) => [part.type, part.value]));
+    const localDate = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+    mocks.vehicleExists.mockResolvedValue(true);
+    mocks.serviceFind.mockImplementation(() => queryResult([]));
+    mocks.serviceCreate.mockResolvedValue({ _id: 'service-1', vehicleId, date: localDate, odometer: 12000, cost: 500 });
+    await request(app).post('/api/services').set('x-test-owner', 'owner-a').set('x-client-time-zone', 'Asia/Kolkata').send({
+      vehicleId, date: localDate, serviceType: 'Oil change', odometer: 12000, cost: 500,
+    }).expect(201);
+    expect(mocks.serviceCreate).toHaveBeenCalledOnce();
   });
 
   it('rejects a service edit that would make a later odometer reading decrease', async () => {

@@ -80,10 +80,10 @@ export function RecordModal({ open, kind, onClose, onSaved, vehicles = [], initi
     </div>}
     {kind === 'service' && <div className="form-grid">
       <Field label="Vehicle" required><VehicleSelect vehicles={vehicleOptions} value={values.vehicleId ?? ''} onChange={(value) => update('vehicleId', value)} /></Field>
-      <Field label="Service date" required><input className="form-control" type="date" value={values.date ?? today()} onChange={(e) => update('date', e.target.value)} required /></Field>
+      <Field label="Service date" required><input className="form-control" type="date" value={values.date ?? today()} max={today()} onChange={(e) => update('date', e.target.value)} required /></Field>
       <Field label="Service / work" required><input className="form-control" value={values.serviceType ?? ''} onChange={(e) => update('serviceType', e.target.value)} placeholder="e.g. Oil & filter change" maxLength={80} required /></Field>
       <Field label="Odometer (km)" required><input className="form-control" type="number" min="0" value={values.odometer ?? ''} onChange={(e) => update('odometer', e.target.value)} required /></Field>
-      <div className="span-2 field-hint">For one vehicle, dated service readings must not move backwards.</div>
+      <div className="span-2 field-hint">Service dates cannot be in the future. For one vehicle, dated service readings must not move backwards.</div>
       <Field label="Cost (₹)" required><input className="form-control" type="number" min="0" step="0.01" value={values.cost ?? ''} onChange={(e) => update('cost', e.target.value)} required /></Field>
       <Field label="Workshop"><input className="form-control" value={values.workshop ?? ''} onChange={(e) => update('workshop', e.target.value)} maxLength={120} /></Field>
       <Field label="Notes" wide><textarea className="form-control" rows={2} value={values.notes ?? ''} onChange={(e) => update('notes', e.target.value)} maxLength={1000} /></Field>

@@ -36,10 +36,11 @@ export function setCsrfToken(token: string | null) {
 
 export async function send<T>(path: string, body?: unknown, method = 'POST'): Promise<T> {
   const token = await getCsrf();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const response = await fetch(`/api${path}`, {
     method,
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-Token': token },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-Token': token, 'X-Client-Time-Zone': timeZone },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return responseData<T>(response);

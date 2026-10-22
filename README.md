@@ -41,9 +41,9 @@ Copy `.env.example` only for local development. Never commit real values. Config
 - `RESEND_API_KEY` and `EMAIL_FROM`: verified email-sender configuration for recovery and scheduled reminder delivery.
 - `CRON_SECRET`: long random bearer secret for the scheduled reminder endpoint.
 - `BLOB_READ_WRITE_TOKEN`: Vercel Blob credential for the project's private store. The server creates short-lived, owner-authorized download links; do not make document blobs public.
-- `AI_GATEWAY_API_KEY`: optional protected Vercel AI Gateway key for environments that do not have a suitable Vercel OIDC credential. `AI_MODEL` may select an available Gateway model.
+- `AI_GATEWAY_API_KEY`: optional protected Vercel AI Gateway key for environments that do not have a suitable Vercel OIDC credential. Set `AI_MODEL` to a Gateway model ID that the authenticated catalog marks as eligible for HTTP inference; `/api/status` fails closed unless that eligibility check succeeds. No model ID is guessed or silently defaulted.
 
-`/api/status` indicates whether required provider settings are present; it never returns their values. In-app reminders and deterministic record summaries remain available when email or AI is unconfigured. The Vercel Cron declaration requests one daily run at 08:00 India time; email delivery still requires a working provider and configured sender.
+`/api/status` indicates whether required providers are usable; it never returns their values. AI readiness is checked against the authenticated Gateway model catalog and fails closed unless the selected language model is eligible for HTTP inference. In-app reminders and deterministic record summaries remain available when email or AI is unavailable. The Vercel Cron declaration requests one daily run at 08:00 India time; email delivery still requires a working provider and configured sender.
 
 ### Administrator provisioning
 

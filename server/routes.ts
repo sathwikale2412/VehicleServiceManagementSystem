@@ -18,6 +18,7 @@ import {
 } from '../shared/schemas';
 import { Expense, Feedback, RateLimit, Reminder, ResetToken, ServiceRecord, User, Vehicle, VehicleDocument } from './models';
 import { connectDatabase } from './database';
+import { isAiModelEligible } from './ai-models';
 import { aggregateReportData } from './reporting';
 import {
   digestToken,
@@ -62,6 +63,17 @@ const validIsoDate = (value: string) => {
   const date = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 };
+function todayInTimeZone(timeZone?: string) {
+  const selectedTimeZone = timeZone && timeZone.length <= 64 ? timeZone : 'UTC';
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: selectedTimeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const fields = Object.fromEntries(parts.filter((part) => ['year', 'month', 'day'].includes(part.type)).map((part) => [part.type, part.value]));
+    return `${fields.year}-${fields.month}-${fields.day}`;
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+const validServiceDate = (value: string, timeZone?: string) => validIsoDate(value) && value <= todayInTimeZone(timeZone);
 const isResource = (value: string): value is ResourceKey => Object.hasOwn(resources, value);
 const allowedMimeTypes = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
 const maxUploadBytes = 5 * 1024 * 1024;
@@ -377,7 +389,7 @@ apiRouter.get('/documents', requireUser, async (req: AuthenticatedRequest, res) 
   }
 });
 
-apiRouter.post('/documents/upload', requireUser, requireCsrf, express.raw({ type: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'], limit: '5mb' }), async (req: AuthenticatedRequest, res) => {
+apiRouter.post('/documents/upload', requireUser, durableRateLimit(20, 60 * 60 * 1000), requireCsrf, express.raw({ type: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'], limit: '5mb' }), async (req: AuthenticatedRequest, res) => {
   if (!req.userId) return res.status(401).json({ error: 'Sign in to continue.' });
   if (!process.env.BLOB_READ_WRITE_TOKEN) return res.status(503).json({ error: 'Private document storage is not configured yet.' });
   const contentType = String(req.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
@@ -446,7 +458,9 @@ apiRouter.delete('/documents/:id', requireUser, requireCsrf, async (req: Authent
 apiRouter.post('/ai/insights', requireUser, durableRateLimit(20, 60 * 60 * 1000), requireCsrf, async (req: AuthenticatedRequest, res) => {
   if (!req.userId) return res.status(401).json({ error: 'Sign in to continue.' });
   const gatewayKey = process.env.AI_GATEWAY_API_KEY ?? process.env.VERCEL_OIDC_TOKEN;
-  if (!gatewayKey) return res.status(503).json({ error: 'AI insights are not configured for this environment yet.' });
+  const model = process.env.AI_MODEL?.trim();
+  if (!gatewayKey || !model) return res.status(503).json({ error: 'AI Gateway credentials and an eligible model are not configured for this environment yet.' });
+  if (!(await isAiModelEligible(gatewayKey, model))) return res.status(503).json({ error: 'The configured AI model is not currently eligible in Vercel AI Gateway.' });
   try {
     const [vehicles, services, expenses, reminders] = await Promise.all([
       Vehicle.find({ ownerId: req.userId }).select('make model year fuelType odometer insuranceExpiry puccExpiry').lean(),
@@ -461,7 +475,7 @@ apiRouter.post('/ai/insights', requireUser, durableRateLimit(20, 60 * 60 * 1000)
     const data = { vehicles, services, expenses, reminders };
     const evidenceDates = [...(services as any[]), ...(expenses as any[])].map((item) => String(item.date)).filter(validIsoDate).sort();
     const result = await client.chat.completions.create({
-      model: process.env.AI_MODEL ?? 'openai/gpt-4.1-mini',
+      model,
       temperature: 0.3,
       max_completion_tokens: 500,
       messages: [
@@ -606,6 +620,7 @@ apiRouter.post('/:resource', requireUser, requireCsrf, async (req: Authenticated
   const resource = resources[resourceName];
   const parsed = resource.schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Check the submitted fields.' });
+  if (resourceName === 'services' && !validServiceDate(parsed.data.date, req.get('x-client-time-zone'))) return res.status(400).json({ error: 'Service date cannot be in the future.' });
   const vehicleId = parsed.data.vehicleId;
   if (vehicleId && !(await ensureOwnedVehicle(vehicleId, req.userId))) return res.status(404).json({ error: 'Vehicle not found.' });
   try {
@@ -628,6 +643,7 @@ apiRouter.patch('/:resource/:id', requireUser, requireCsrf, async (req: Authenti
   const resource = resources[resourceName];
   const parsed = resource.schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Check the submitted fields.' });
+  if (resourceName === 'services' && !validServiceDate(parsed.data.date, req.get('x-client-time-zone'))) return res.status(400).json({ error: 'Service date cannot be in the future.' });
   const vehicleId = parsed.data.vehicleId;
   if (vehicleId && !(await ensureOwnedVehicle(vehicleId, req.userId))) return res.status(404).json({ error: 'Vehicle not found.' });
   try {

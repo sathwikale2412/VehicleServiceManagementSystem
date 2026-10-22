@@ -1,5 +1,6 @@
 import express from 'express';
 import helmet from 'helmet';
+import { isAiModelEligible } from './ai-models';
 import { apiRouter } from './routes';
 import { connectDatabase } from './database';
 import { installSession } from './security';
@@ -33,14 +34,16 @@ app.get('/api/health', (_req, res) => {
   res.status(200).json({ ok: true, service: 'vehicle-desk-api' });
 });
 
-app.get('/api/status', (_req, res) => {
+app.get('/api/status', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
+  const aiCredential = process.env.AI_GATEWAY_API_KEY ?? process.env.VERCEL_OIDC_TOKEN;
+  const aiConfigured = await isAiModelEligible(aiCredential, process.env.AI_MODEL);
   res.json({
     databaseConfigured: Boolean(process.env.MONGODB_URI),
     sessionConfigured: Boolean(process.env.SESSION_SECRET),
     emailConfigured: Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM && process.env.APP_BASE_URL),
     blobConfigured: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
-    aiConfigured: Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN),
+    aiConfigured,
     adminConfigured: Boolean(process.env.ADMIN_EMAILS?.trim()),
   });
 });
